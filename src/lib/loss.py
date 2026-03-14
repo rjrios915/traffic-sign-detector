@@ -2,11 +2,19 @@ import math
 import torch
 import torch.nn as nn
 
-LAMBDA_BOX = 10.0
-LAMBDA_NOOBJ = 0.5
+LAMBDA_BOX = 3.0
+LAMBDA_NOOBJ = 2.0
+LAMBDA_CLASS = 1.0
 
 # Distance‑IoU Loss: Faster and Better Learning for Bounding Box Regression
-def CIoU_Loss(pred, target, S=8):
+def CIoU_Loss(
+    pred,
+    target,
+    S=8,
+    lambda_box=LAMBDA_BOX,
+    lambda_noobj=LAMBDA_NOOBJ,
+    lambda_class=LAMBDA_CLASS,
+):
     obj_t = target[..., 0]
     x_t, y_t, w_t, h_t = target[..., 1], target[..., 2], target[..., 3], target[..., 4]
 
@@ -86,16 +94,23 @@ def CIoU_Loss(pred, target, S=8):
     else:
         box_loss = torch.tensor(0.0, device=pred.device)
 
-    total = (LAMBDA_BOX * box_loss) + obj_loss + (LAMBDA_NOOBJ * noobj_loss)
+    class_loss = torch.tensor(0.0, device=pred.device)
+    if pred.shape[-1] > 5 and target.shape[-1] > 5 and obj_mask.any():
+        class_logits = pred[..., 5:]
+        class_target = target[..., 5].long()
+        class_loss = nn.CrossEntropyLoss()(class_logits[obj_mask], class_target[obj_mask])
+
+    total = (lambda_box * box_loss) + obj_loss + (lambda_noobj * noobj_loss) + (lambda_class * class_loss)
 
     return total, {
         "box": float(box_loss.item()),
         "obj": float(obj_loss.item()),
         "noobj": float(noobj_loss.item()),
+        "cls": float(class_loss.item()),
     }
 
 # YOLO Loss: You Only Look Once for Object Detection
-def YOLO_Loss(pred, target):
+def YOLO_Loss(pred, target, lambda_box=LAMBDA_BOX, lambda_noobj=LAMBDA_NOOBJ):
     obj_t = target[..., 0]
     x_t, y_t, w_t, h_t = target[..., 1], target[..., 2], target[..., 3], target[..., 4]
 
@@ -123,5 +138,5 @@ def YOLO_Loss(pred, target):
     else:
         box_loss = torch.tensor(0.0, device=pred.device)
 
-    total = (LAMBDA_BOX * box_loss) + obj_loss + (LAMBDA_NOOBJ * noobj_loss)
+    total = (lambda_box * box_loss) + obj_loss + (lambda_noobj * noobj_loss)
     return total, {"box": box_loss.item(), "obj": obj_loss.item(), "noobj": float(noobj_loss.item())}
